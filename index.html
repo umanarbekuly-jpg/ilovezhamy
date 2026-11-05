@@ -190,6 +190,18 @@
       cursor: pointer;
     }
 
+    .filename-setting {
+      grid-column: 1 / -1;
+    }
+
+    #pdfName {
+      width: 100%;
+      border: none;
+      background: transparent;
+      color: #37352f;
+      font: inherit;
+    }
+
     /* IMAGE LIST */
 
     .image-list {
@@ -404,6 +416,17 @@
       font-size: 12px;
     }
 
+    .result-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    #downloadBtn {
+      text-align: center;
+      text-decoration: none;
+    }
+
     /* FOOTER */
 
     .footer {
@@ -447,6 +470,10 @@
       .result.show {
         flex-direction: column;
         align-items: stretch;
+      }
+
+      .result-actions {
+        flex-direction: column;
       }
     }
   </style>
@@ -542,6 +569,11 @@
       <!-- SETTINGS -->
 
       <div class="settings">
+
+        <div class="setting filename-setting">
+          <label class="setting-label" for="pdfName">PDF file name</label>
+          <input id="pdfName" type="text" placeholder="images.pdf" maxlength="80">
+        </div>
 
         <div class="setting">
 
@@ -674,12 +706,10 @@
 
         </div>
 
-        <button
-          class="primary"
-          id="downloadBtn"
-        >
-          Download PDF
-        </button>
+        <div class="result-actions">
+          <a class="primary" id="downloadBtn">Download PDF</a>
+          <button class="secondary" id="shareBtn" hidden>Share PDF</button>
+        </div>
 
       </div>
 
@@ -737,6 +767,8 @@
 
   const downloadBtn =
     document.getElementById("downloadBtn");
+  const pdfNameInput = document.getElementById("pdfName");
+  const shareBtn = document.getElementById("shareBtn");
 
 
   /* STATE */
@@ -744,6 +776,8 @@
   let images = [];
 
   let generatedPDF = null;
+  let pdfURL = null;
+  let creatingPDF = false;
 
   let draggedIndex = null;
 
@@ -836,7 +870,7 @@
 
   function addFiles(files) {
 
-    if (!files.length) return;
+    if (creatingPDF || !files.length) return;
 
     files
       .filter(isImage)
@@ -844,7 +878,6 @@
 
         images.push({
 
-          file: file,
 
           url:
             URL.createObjectURL(file),
@@ -860,7 +893,7 @@
 
     render();
 
-    result.classList.remove("show");
+    clearPDF();
 
     status.textContent =
       `${files.length} image(s) added.`;
@@ -960,6 +993,8 @@
             event => {
 
               event.stopPropagation();
+              if (creatingPDF) return;
+              clearPDF();
 
               URL.revokeObjectURL(
                 image.url
@@ -1024,6 +1059,7 @@
 
 
             if (
+              creatingPDF ||
               draggedIndex === null ||
               draggedIndex === targetIndex
             ) {
@@ -1031,6 +1067,7 @@
             }
 
 
+            clearPDF();
             const moved =
               images.splice(
                 draggedIndex,
@@ -1121,15 +1158,10 @@
 
       images = [];
 
-      generatedPDF = null;
+      clearPDF();
 
       fileInput.value = "";
-
-      result.classList.remove(
-        "show"
-      );
-
-      status.textContent = "";
+      pdfNameInput.value = "";
 
       render();
 
@@ -1137,212 +1169,40 @@
   );
 
 
-  /* LOAD IMAGE */
-
-  function loadImage(file) {
-
-    return new Promise(
-      (resolve, reject) => {
-
-        const img =
-          new Image();
-
-        img.onload =
-          () => resolve(img);
-
-        img.onerror =
-          reject;
-
-        img.src =
-          URL.createObjectURL(file);
-
-      }
-    );
-
-  }
-
-
   /* COMPRESS IMAGE */
-
-  async function compressImage(
-    file,
-    compression
-  ) {
-
-    const image =
-      await loadImage(file);
-
-
-    let width =
-      image.naturalWidth;
-
-    let height =
-      image.naturalHeight;
-
-
-    /*
-      Limiting the longest side to
-      2200px significantly reduces
-      huge phone-camera images.
-    */
+  async function compressImage(url, compression) {
+    const image = await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = url;
+    });
 
     const maxDimension = 2200;
-
-
-    if (
-      Math.max(width, height) >
-      maxDimension
-    ) {
-
-      const scale =
-        maxDimension /
-        Math.max(width, height);
-
-
-      width =
-        Math.round(
-          width * scale
-        );
-
-      height =
-        Math.round(
-          height * scale
-        );
-
-    }
-
-
-    const canvas =
-      document.createElement(
-        "canvas"
-      );
-
-
+    const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight));
+    const width = Math.max(1, Math.round(image.naturalWidth * scale));
+    const height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const canvas = document.createElement("canvas");
     canvas.width = width;
-
     canvas.height = height;
 
+    try {
+      const context = canvas.getContext("2d", { alpha: false });
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, width, height);
+      context.drawImage(image, 0, 0, width, height);
 
-    const context =
-      canvas.getContext(
-        "2d",
-        {
-          alpha: false
-        }
-      );
-
-
-    /*
-      White background makes
-      transparent PNGs look correct
-      when converted to JPEG.
-    */
-
-    context.fillStyle =
-      "#ffffff";
-
-    context.fillRect(
-      0,
-      0,
-      width,
-      height
-    );
-
-
-    context.drawImage(
-      image,
-      0,
-      0,
-      width,
-      height
-    );
-
-
-    URL.revokeObjectURL(
-      image.src
-    );
-
-
-    return new Promise(
-      resolve => {
-
-        canvas.toBlob(
-          blob => resolve(blob),
-          "image/jpeg",
-          compression
-        );
-
-      }
-    );
-
+      const jpeg = await new Promise((resolve, reject) => {
+        canvas.toBlob(blob => {
+          if (blob) resolve(blob);
+          else reject(new Error("Could not encode image as JPEG."));
+        }, "image/jpeg", compression);
+      });
+      return { width, height, bytes: new Uint8Array(await jpeg.arrayBuffer()) };
+    } finally {
+      canvas.width = canvas.height = 0;
+    }
   }
-
-
-  /* BLOB → DATA URL */
-
-  function blobToDataURL(blob) {
-
-    return new Promise(
-      (resolve, reject) => {
-
-        const reader =
-          new FileReader();
-
-        reader.onloadend =
-          () => resolve(
-            reader.result
-          );
-
-        reader.onerror =
-          reject;
-
-        reader.readAsDataURL(
-          blob
-        );
-
-      }
-    );
-
-  }
-
-
-  /* GET IMAGE SIZE */
-
-  function getImageDimensions(
-    dataURL
-  ) {
-
-    return new Promise(
-      (resolve, reject) => {
-
-        const img =
-          new Image();
-
-        img.onload =
-          () => {
-
-            resolve({
-
-              width:
-                img.naturalWidth,
-
-              height:
-                img.naturalHeight
-
-            });
-
-          };
-
-        img.onerror =
-          reject;
-
-        img.src = dataURL;
-
-      }
-    );
-
-  }
-
 
   /* PAGE SIZE */
 
@@ -1415,16 +1275,17 @@
     "click",
     async () => {
 
-      if (!images.length) return;
+      if (creatingPDF || !images.length) return;
+
+      creatingPDF = true;
+      fileInput.disabled = true;
 
 
       createBtn.disabled = true;
 
       clearBtn.disabled = true;
 
-      result.classList.remove(
-        "show"
-      );
+      clearPDF();
 
 
       try {
@@ -1460,24 +1321,7 @@
             Compress original image.
           */
 
-          const compressed =
-            await compressImage(
-              images[i].file,
-              compression
-            );
-
-
-          const dataURL =
-            await blobToDataURL(
-              compressed
-            );
-
-
-          const dimensions =
-            await getImageDimensions(
-              dataURL
-            );
-
+          const dimensions = await compressImage(images[i].url, compression);
 
           const page =
             getPageDimensions(
@@ -1596,7 +1440,7 @@
 
           pdf.addImage(
 
-            dataURL,
+            dimensions.bytes,
 
             "JPEG",
 
@@ -1621,8 +1465,10 @@
           "Creating PDF...";
 
 
-        generatedPDF =
-          pdf.output("blob");
+        generatedPDF = pdf.output("blob");
+        pdfURL = URL.createObjectURL(generatedPDF);
+        downloadBtn.href = pdfURL;
+        updateDownloadName();
 
 
         const originalSize =
@@ -1708,6 +1554,8 @@
 
       finally {
 
+        creatingPDF = false;
+        fileInput.disabled = false;
         createBtn.disabled =
           images.length === 0;
 
@@ -1721,54 +1569,40 @@
 
 
   /* DOWNLOAD */
+  function clearPDF() {
+    status.textContent = "";
+    result.classList.remove("show");
+    downloadBtn.removeAttribute("href");
+    if (pdfURL) URL.revokeObjectURL(pdfURL);
+    pdfURL = null;
+    generatedPDF = null;
+  }
 
-  downloadBtn.addEventListener(
-    "click",
-    () => {
+  function updateDownloadName() {
+    const name = pdfNameInput.value.trim()
+      .replace(/(?:\.pdf)+$/i, "")
+      .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
+      .replace(/^[. ]+|[. ]+$/g, "");
+    downloadBtn.download = (name || "images") + ".pdf";
+    shareBtn.hidden = !generatedPDF || !navigator.share ||
+      !navigator.canShare?.({ files: [getPDFFile()] });
+  }
 
-      if (!generatedPDF)
-        return;
+  function getPDFFile() {
+    return new File([generatedPDF], downloadBtn.download, { type: "application/pdf" });
+  }
 
-
-      const url =
-        URL.createObjectURL(
-          generatedPDF
-        );
-
-
-      const link =
-        document.createElement(
-          "a"
-        );
-
-
-      link.href = url;
-
-      link.download =
-        "images.pdf";
-
-
-      document.body.appendChild(
-        link
-      );
-
-
-      link.click();
-
-      link.remove();
-
-
-      setTimeout(
-        () =>
-          URL.revokeObjectURL(
-            url
-          ),
-        1000
-      );
-
+  pdfNameInput.addEventListener("input", updateDownloadName);
+  shareBtn.addEventListener("click", async () => {
+    if (!generatedPDF) return;
+    try {
+      await navigator.share({ files: [getPDFFile()] });
+    } catch (error) {
+      if (error.name !== "AbortError") {
+        status.textContent = "Sharing failed. Use Download PDF to save the file.";
+      }
     }
-  );
-
+  });
 
   /* INITIAL RENDER */
 
